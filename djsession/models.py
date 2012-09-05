@@ -1,9 +1,14 @@
+import base64
+import cPickle as pickle
+
 from django.db import models
 from django.utils.translation import ugettext_lazy as _
 from django.contrib.sessions.models import SessionManager
 from djsession.managers import TableversionManager
 from django.db.models import signals
 from django.core.management.color import no_style
+from django.utils.hashcompat import md5_constructor
+from django.conf import settings
 
 class Tableversion(models.Model):
     """
@@ -15,7 +20,7 @@ class Tableversion(models.Model):
         auto_now_add=True)
 
     objects = TableversionManager()
-    
+
     class Meta:
         get_latest_by = ('current_version')
         verbose_name = _("table version")
@@ -37,8 +42,28 @@ class Session(models.Model):
     # a good idea to rely on this code.
     objects = SessionManager()
 
+    # SHAME, copy and paste from session model...
+    # I don't remember why but I believe inheritance doesn't work
+    # as I wanted so I did it this way.
+    def get_decoded(self):
+        encoded_data = base64.decodestring(self.session_data)
+        pickled, tamper_check = encoded_data[:-32], encoded_data[-32:]
+        if md5_constructor(pickled + settings.SECRET_KEY).hexdigest() != tamper_check:
+            from django.core.exceptions import SuspiciousOperation
+            raise SuspiciousOperation, "User tampered with session cookie."
+        try:
+            return pickle.loads(pickled)
+        # Unpickling can cause a variety of exceptions. If something happens,
+        # just return an empty dictionary (an empty session).
+        except:
+            return {}
+
     class Meta:
         abstract = True
+
+#if ('django.contrib.sessions' in settings.INSTALLED_APPS):
+#    raise ValueError("""django.contrib.sessions cannot be used with djsession.
+#You have to choose.""")
 
 class PrevSession(Session):
 
@@ -46,7 +71,7 @@ class PrevSession(Session):
         db_table = PREVIOUS_TABLE_NAME
 
 class CurrentSession(Session):
-    
+
     class Meta:
         db_table = CURRENT_TABLE_NAME
 
